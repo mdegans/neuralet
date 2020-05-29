@@ -87,28 +87,27 @@ class GstEngine(multiprocessing.Process):
 
     Arguments:
         config (:obj:`GstConfig`):
-            GstConfig instance for this engine.
+            GstConfig instance for this engine (wraps sd.core.ConfigEngine).
         debug (bool, optional):
             log all bus messages to the debug level
-            (this can mean a lot of spam)
+            (this can mean a lot of spam, but can also be useful if things are
+            misbehaving)
+        blocking (bool, optional):
+            if set to true, attempts to access the .results property will block
+            for .queue_timeout seconds waiting for results. If no results are
+            ready after that, None is returned. If set to false, and a result is
+            not ready, None will be returned immediately.
 
     Attributes:
         logger (:obj:`logging.Logger`):
             Python logger for the class.
         queue_timeout (int): 
-            (default: 15 seconds) timeout for the queue. If timeout is a
-            positive integer, setting/getting properties will block this number
-            of seconds maximum before raising the queue.Full exception.
-
-            If queue_timeout is not a positive integer, setting properties
-            will put an item into the queue without blocking and if the queue is
-            full, a queue.Full exception will be raised.
-
-            General advice: set this to None and catch the exception if
-            non-blocking behavior is important (eg. asyncio). Otherwise,
-            leave the timeout, but it will block any context you use the
-            setter from and this block **cannot** be interrupted, even with
-            SIGINT / KeyboardInterrupt.
+            (default: 15 seconds) timeout for the blocking argument/attribute.
+        feed_name (str):
+            (default: 'default') the feed name portion of the uri.
+        web_root (str):
+            The default web root path.
+            (default: '/repo/data/web_gui')
         IGNORED_MESSAGES(:obj:`tuple` of :obj:`Gst.MessageType`):
             Gst.MessageType to be ignored by on_bus_message.
 
@@ -126,9 +125,14 @@ class GstEngine(multiprocessing.Process):
     IGNORED_MESSAGES = tuple()  # type: Tuple[Gst.MessageType]
 
     logger = logging.getLogger('GstEngine')
+    # TODO(mdegans): make these properties that warn when a set is attempted
+    #  after the processs has started since these are copied at that point
+    #  (since this is a process) and re-assignment won't work.
     queue_timeout=10
+    feed_name = 'default'
+    web_root = '/repo/data/web_gui'
 
-    def __init__(self, config:GstConfig, *args, debug=False, **kwargs):
+    def __init__(self, config:GstConfig, *args, debug=False, blocking=False, **kwargs):
         self.logger.debug('__init__')
         super().__init__(*args, **kwargs)
         # set debug for optional extra logging
@@ -154,10 +158,8 @@ class GstEngine(multiprocessing.Process):
 
         # process communication primitives
         self._result_queue = multiprocessing.Queue(maxsize=1)
-        self.osd_queue = multiprocessing.Queue(maxsize=1)
         self._stop_requested = multiprocessing.Event()
-        self._reset_requested = multiprocessing.Event()
-        self.blocking=False
+        self.blocking=blocking
 
     @property
     def results(self) -> Sequence[str]:
@@ -364,6 +366,34 @@ class GstEngine(multiprocessing.Process):
             self._infer_elements.append(elem)
         return True
 
+    def _create_sink(self, pipe_string: str = None):
+        """
+        Create a Gst.Bin sink from a pipeline string
+        """
+        try:
+            #TODO(mdegans): urlparse and path join on the paths
+            # (to validate the uri and avoid "//" and such)
+            public_url = self._gst_config.config['App']['PublicUrl']
+            playlist_root = f'{public_url}/static/gstreamer/{self.feed_name}'
+            #TODO(mdegans): make the base path a uri for testing
+            video_root = f'{self.web_root}/static/gstreamer/{self.feed_name}'
+            if not pipe_string:
+                encoder = self._gst_config.master_config['App']['Encoder']
+                pipe_string = f'{encoder} ! mpegtsmux ! hlssink ' \
+                    f'max-files=15 target-duration=5' \
+                    f'playlist-root={playlist_root} ' \
+                    f'location={video_root}/video_%05d.ts ' \
+                    f'playlist-location={video_root}/playlist.m3u8'
+            self._sink = Gst.parse_bin_from_description(pipe_string, True)
+            if not self._sink:
+                # i don't think it's possble to get here unless gstreamer is
+                # broken
+                return False
+            return True
+        except (GLib.Error, KeyError):
+            self.logger.error("sink creation failed", exc_info=True)
+            return False
+
     def _create_all(self) -> int:
         """
         Create and link the pipeline from self.config.
@@ -380,7 +410,7 @@ class GstEngine(multiprocessing.Process):
             functools.partial(self._create_element, 'osd_converter'),
             functools.partial(self._create_element, 'tiler'),
             functools.partial(self._create_element, 'osd'),
-            functools.partial(self._create_element, 'sink'),
+            self._create_sink,
         )
 
         for i, f in enumerate(create_funcs):
