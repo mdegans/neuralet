@@ -379,7 +379,7 @@ class GstEngine(multiprocessing.Process):
             video_root = f'{self.web_root}/static/gstreamer/{self.feed_name}'
             if not pipe_string:
                 encoder = self._gst_config.master_config['App']['Encoder']
-                pipe_string = f'{encoder} ! mpegtsmux ! hlssink ' \
+                pipe_string = f'video/x-raw,format=I420 ! {encoder} ! mpegtsmux ! hlssink ' \
                     f'max-files=15 target-duration=5' \
                     f'playlist-root={playlist_root} ' \
                     f'location={video_root}/video_%05d.ts ' \
