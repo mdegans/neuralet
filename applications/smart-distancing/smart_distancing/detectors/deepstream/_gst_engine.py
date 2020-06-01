@@ -373,21 +373,30 @@ class GstEngine(multiprocessing.Process):
         try:
             #TODO(mdegans): urlparse and path join on the paths
             # (to validate the uri and avoid "//" and such)
-            public_url = self._gst_config.config['App']['PublicUrl']
+            public_url = self._gst_config.master_config.config['App']['PublicUrl']
             playlist_root = f'{public_url}/static/gstreamer/{self.feed_name}'
             #TODO(mdegans): make the base path a uri for testing
             video_root = f'{self.web_root}/static/gstreamer/{self.feed_name}'
             if not pipe_string:
-                encoder = self._gst_config.master_config['App']['Encoder']
-                pipe_string = f'video/x-raw,format=I420 ! {encoder} ! mpegtsmux ! hlssink ' \
-                    f'max-files=15 target-duration=5' \
+                encoder = self._gst_config.master_config.config['App']['Encoder']
+                pipe_string = f' {encoder} ! mpegtsmux ! hlssink ' \
+                    f'max-files=15 target-duration=5 ' \
                     f'playlist-root={playlist_root} ' \
                     f'location={video_root}/video_%05d.ts ' \
                     f'playlist-location={video_root}/playlist.m3u8'
+            self.logger.debug(f'sink bin string: {pipe_string}')
             self._sink = Gst.parse_bin_from_description(pipe_string, True)
+            dot_filename = bin_to_pdf(
+                self._sink, Gst.DebugGraphDetails.ALL, f'{self.__class__.__name__}.sink.created')
+            if dot_filename:
+                self.logger.debug(
+                    f'.dot file written to {dot_filename}')
             if not self._sink:
                 # i don't think it's possble to get here unless gstreamer is
                 # broken
+                return False
+            if not self._pipeline.add(self._sink):
+                self.logger.error("could not add sink bin to pipeline")
                 return False
             return True
         except (GLib.Error, KeyError):
