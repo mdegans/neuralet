@@ -91,7 +91,6 @@ class GstConfig(object):
     """
 
     SRC_TYPE = 'uridecodebin'
-    SINK_TYPE = 'fakesink'
     MUXER_TYPE = 'concat'  # using this just because it has request pads
     INFER_TYPE = 'identity'
     OSD_CONVERTER_TYPE = 'identity'
@@ -230,7 +229,6 @@ class DsConfig(GstConfig):
             performance.
     """
     SRC_TYPE = 'uridecodebin'
-    SINK_TYPE = 'fakesink'
     MUXER_TYPE = 'nvstreammux'
     INFER_TYPE = 'nvinfer'
     OSD_CONVERTER_TYPE = 'nvvideoconvert'
